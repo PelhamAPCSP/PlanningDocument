@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -5647,8 +5647,8 @@
     }
 
     function handleUnlock(e) {
-      e.preventDefault();
-      const pwd = document.getElementById("site-password-input").value;
+      if (e) e.preventDefault();
+      const pwd = (document.getElementById("site-password-input").value || "").trim();
       const errorEl = document.getElementById("lock-error-text");
       if (pwd === MASTER_PASSWORD_HASH) {
         localStorage.setItem(AUTH_KEY, "unlocked_2627");
@@ -5741,7 +5741,7 @@
       const yyyy = now.getFullYear();
       const mm = String(now.getMonth() + 1).padStart(2, "0");
       const dd = String(now.getDate()).padStart(2, "0");
-      const todayStr = ${yyyy}--;
+      const todayStr = yyyy + "-" + mm + "-" + dd;
 
       let targetRow = document.getElementById("date-" + todayStr);
 
@@ -5751,7 +5751,7 @@
         const futureRows = allRows.filter(r => r.getAttribute("data-date") >= todayStr);
         if (futureRows.length > 0) {
           targetRow = futureRows[0];
-          showToast(Today () is not in session. Jumped to nearest day: );
+          showToast("Today (" + todayStr + ") is not in session. Jumped to nearest day: " + targetRow.getAttribute("data-date"));
         } else {
           // If past the school year, jump to last row; if before, jump to first
           if (todayStr > "2027-06-14") {
@@ -5761,7 +5761,7 @@
           }
         }
       } else {
-        showToast(Jumped to Today: );
+        showToast("Jumped to Today: " + todayStr);
       }
 
       if (targetRow) {
