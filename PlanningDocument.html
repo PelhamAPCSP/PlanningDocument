@@ -884,6 +884,108 @@
       transform: translateY(0);
       pointer-events: auto;
     }
+
+    /* Push-Down (Shift Plans) Controls */
+    .push-btn {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 26px;
+      height: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      color: var(--text-muted);
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+      z-index: 2;
+    }
+    .push-btn svg { width: 15px; height: 15px; }
+    .planner-cell:hover .push-btn,
+    .planner-cell:focus-within .push-btn,
+    .push-btn.active { opacity: 1; }
+    .push-btn:hover, .push-btn.active {
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+    @media (hover: none) {
+      .push-btn { opacity: 0.6; }
+    }
+
+    #push-menu {
+      position: absolute;
+      z-index: 9000;
+      min-width: 230px;
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+      padding: 6px;
+      display: none;
+    }
+    #push-menu.open { display: block; }
+    #push-menu .push-menu-title {
+      font-size: 0.72rem;
+      color: var(--text-faint);
+      padding: 4px 8px 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    #push-menu button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: none;
+      border: none;
+      color: var(--text-main);
+      font: inherit;
+      font-size: 0.86rem;
+      padding: 8px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    #push-menu button:hover { background: var(--bg-surface-hover); }
+    #push-menu button.danger { color: #fca5a5; }
+
+    #undo-bar {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translate(-50%, 12px);
+      z-index: 10001;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      background: #1e293b;
+      border: 1px solid var(--border-strong);
+      color: #fff;
+      padding: 10px 14px 10px 18px;
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+      font-size: 0.86rem;
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.25s ease;
+    }
+    #undo-bar.show {
+      opacity: 1;
+      transform: translate(-50%, 0);
+      pointer-events: auto;
+    }
+    #undo-bar button {
+      background: var(--accent);
+      border: none;
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      padding: 5px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -931,6 +1033,15 @@
         </button>
 
         <!-- Lock Button -->
+        <!-- Backup Export / Import -->
+        <button class="lock-btn" onclick="exportPlans()" title="Export backup (download all plans as a file)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        </button>
+        <button class="lock-btn" onclick="document.getElementById('import-file-input').click()" title="Import backup (restore plans from a file)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+        </button>
+        <input type="file" id="import-file-input" accept=".json,application/json" style="display:none" onchange="importPlansFromFile(this)">
+
         <button class="lock-btn" onclick="lockDocument()" title="Lock Document">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
         </button>
@@ -7511,6 +7622,10 @@
   <!-- TOAST NOTIFICATION -->
   <div id="toast-msg"></div>
 
+  <!-- PUSH-DOWN MENU & UNDO BAR -->
+  <div id="push-menu" role="menu"></div>
+  <div id="undo-bar"><span id="undo-bar-text"></span><button type="button" onclick="undoLastShift()">Undo</button></div>
+
   <!-- LOGIC & SCRIPTS -->
   <script>
     const MASTER_PASSWORD_HASH = "planning2627";
@@ -7579,6 +7694,7 @@
       loadLocalPlans();
       setupAutoSave();
       setupRichTextShortcuts();
+      setupPushButtons();
       updateTodayLabel();
       jumpToToday();
       syncWithCloudOnLaunch();
@@ -7704,6 +7820,232 @@
       });
     }
 
+    // Push plans down one school day
+    const CLASS_COLS = { csp: "AP CS Principles", csa: "AP CS A", eng: "Engineering" };
+    let lastShiftSnapshot = null;
+    let undoTimer = null;
+    let pushMenuTarget = null;
+
+    function getSchoolDays() {
+      // Ordered list of dates that have class cells (days off are skipped)
+      return Array.from(document.querySelectorAll("tr.day-row:not(.is-off)"))
+        .map(r => r.getAttribute("data-date"));
+    }
+
+    function setupPushButtons() {
+      if (document.querySelector(".push-btn")) return; // already set up
+      const icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="4" x2="12" y2="18"></line><polyline points="6 12 12 18 18 12"></polyline><line x1="5" y1="21" x2="19" y2="21"></line></svg>';
+      document.querySelectorAll("tr.day-row:not(.is-off) td.planner-cell .plan-content").forEach(el => {
+        const key = el.getAttribute("data-key");
+        const idx = key.lastIndexOf("_");
+        const date = key.slice(0, idx);
+        const col = key.slice(idx + 1);
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "push-btn";
+        btn.title = "Push plans down a day";
+        btn.innerHTML = icon;
+        btn.addEventListener("mousedown", e => e.preventDefault()); // keep editor focus stable
+        btn.addEventListener("click", e => {
+          e.stopPropagation();
+          openPushMenu(btn, date, col);
+        });
+        el.parentElement.appendChild(btn);
+      });
+
+      document.addEventListener("click", e => {
+        const menu = document.getElementById("push-menu");
+        if (menu.classList.contains("open") && !menu.contains(e.target)) closePushMenu();
+      });
+      document.addEventListener("keydown", e => {
+        if (e.key === "Escape") closePushMenu();
+      });
+      window.addEventListener("resize", closePushMenu);
+    }
+
+    function formatShortDate(dateStr) {
+      const [y, m, d] = dateStr.split("-").map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    }
+
+    function openPushMenu(btn, date, col) {
+      const menu = document.getElementById("push-menu");
+      if (pushMenuTarget && pushMenuTarget.btn === btn && menu.classList.contains("open")) {
+        closePushMenu();
+        return;
+      }
+      closePushMenu();
+      pushMenuTarget = { btn, date, col };
+      btn.classList.add("active");
+
+      menu.innerHTML = "";
+      const title = document.createElement("div");
+      title.className = "push-menu-title";
+      title.innerText = "From " + formatShortDate(date) + " onward";
+      menu.appendChild(title);
+
+      const addItem = (label, fn, cls) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.innerText = label;
+        if (cls) b.className = cls;
+        b.addEventListener("click", e => {
+          e.stopPropagation();
+          closePushMenu();
+          fn();
+        });
+        menu.appendChild(b);
+      };
+      addItem("↓ Push " + CLASS_COLS[col] + " down 1 day", () => shiftPlans(date, [col], 1));
+      addItem("↓ Push all classes down 1 day", () => shiftPlans(date, Object.keys(CLASS_COLS), 1));
+      addItem("↑ Pull " + CLASS_COLS[col] + " up 1 day", () => shiftPlans(date, [col], -1), "danger");
+
+      const r = btn.getBoundingClientRect();
+      menu.classList.add("open");
+      const menuW = menu.offsetWidth;
+      let left = r.right + window.scrollX - menuW;
+      left = Math.max(window.scrollX + 8, left);
+      menu.style.left = left + "px";
+      menu.style.top = (r.bottom + window.scrollY + 4) + "px";
+    }
+
+    function closePushMenu() {
+      const menu = document.getElementById("push-menu");
+      menu.classList.remove("open");
+      if (pushMenuTarget) pushMenuTarget.btn.classList.remove("active");
+      pushMenuTarget = null;
+    }
+
+    // direction 1 = push later (down), -1 = pull earlier (up)
+    function shiftPlans(startDate, cols, direction) {
+      const days = getSchoolDays();
+      const start = days.indexOf(startDate);
+      if (start < 0) return;
+      const last = days.length - 1;
+      if (start === last) {
+        showToast("This is the last school day — nowhere to shift to.");
+        return;
+      }
+
+      // Snapshot so the shift can be undone (pull-up overwrites the start cell)
+      lastShiftSnapshot = JSON.stringify(plans);
+
+      cols.forEach(col => {
+        const k = i => days[i] + "_" + col;
+        if (direction === 1) {
+          // Content on the final school day would fall off the calendar; keep it there, merged
+          const overflow = plans[k(last)];
+          for (let i = last; i > start; i--) {
+            const prev = plans[k(i - 1)];
+            if (prev !== undefined) plans[k(i)] = prev; else delete plans[k(i)];
+          }
+          if (overflow !== undefined) {
+            plans[k(last)] = plans[k(last)] ? plans[k(last)] + "<br>" + overflow : overflow;
+          }
+          delete plans[k(start)];
+        } else {
+          for (let i = start; i < last; i++) {
+            const next = plans[k(i + 1)];
+            if (next !== undefined) plans[k(i)] = next; else delete plans[k(i)];
+          }
+          delete plans[k(last)];
+        }
+      });
+
+      localStorage.setItem(PLANS_STORAGE_KEY, JSON.stringify(plans));
+      renderAllPlans();
+      pushPlansToGist().catch(() => {});
+
+      const what = cols.length > 1 ? "All classes" : CLASS_COLS[cols[0]];
+      const verb = direction === 1 ? "pushed down" : "pulled up";
+      showUndoBar(what + " " + verb + " 1 day from " + formatShortDate(startDate));
+    }
+
+    function renderAllPlans() {
+      document.querySelectorAll(".plan-content").forEach(el => {
+        const key = el.getAttribute("data-key");
+        el.innerHTML = plans[key] !== undefined ? plans[key] : "";
+      });
+    }
+
+    function showUndoBar(msg) {
+      const bar = document.getElementById("undo-bar");
+      document.getElementById("undo-bar-text").innerText = msg;
+      bar.classList.add("show");
+      clearTimeout(undoTimer);
+      undoTimer = setTimeout(() => {
+        bar.classList.remove("show");
+        lastShiftSnapshot = null;
+      }, 10000);
+    }
+
+    function undoLastShift() {
+      if (!lastShiftSnapshot) return;
+      plans = JSON.parse(lastShiftSnapshot);
+      lastShiftSnapshot = null;
+      localStorage.setItem(PLANS_STORAGE_KEY, JSON.stringify(plans));
+      renderAllPlans();
+      pushPlansToGist().catch(() => {});
+      clearTimeout(undoTimer);
+      document.getElementById("undo-bar").classList.remove("show");
+      showToast("Undone");
+    }
+
+    // Backup Export / Import
+    function exportPlans() {
+      const count = Object.keys(plans).length;
+      if (!count) {
+        showToast("No plans to export yet.");
+        return;
+      }
+      const now = new Date();
+      const stamp = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
+      const blob = new Blob([JSON.stringify(plans, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "planner-backup-" + stamp + ".json";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      showToast("Exported " + count + " plans");
+    }
+
+    function importPlansFromFile(input) {
+      const file = input.files && input.files[0];
+      input.value = ""; // allow re-importing the same file
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        let incoming;
+        try {
+          incoming = JSON.parse(reader.result);
+        } catch (err) {
+          showToast("That file isn't a valid planner backup.", 4000);
+          return;
+        }
+        if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
+          showToast("That file isn't a valid planner backup.", 4000);
+          return;
+        }
+        // Only accept planner keys like 2026-10-16_csp with text values
+        const valid = Object.keys(incoming).filter(k =>
+          /^\d{4}-\d{2}-\d{2}_(csp|csa|eng|note)$/.test(k) && typeof incoming[k] === "string");
+        if (!valid.length) {
+          showToast("No plans found in that file.", 4000);
+          return;
+        }
+        lastShiftSnapshot = JSON.stringify(plans);
+        valid.forEach(k => { plans[k] = incoming[k]; });
+        localStorage.setItem(PLANS_STORAGE_KEY, JSON.stringify(plans));
+        renderAllPlans();
+        pushPlansToGist().catch(() => {});
+        showUndoBar("Imported " + valid.length + " plans from " + file.name);
+      };
+      reader.readAsText(file);
+    }
+
     // Insert quick note chips helper
     function insertQuickNote(key, label) {
       const el = document.querySelector('.date-note-content[data-key="' + key + '"]');
@@ -7767,6 +8109,22 @@
       }
 
       try {
+        // Joining an existing Gist: merge the cloud copy in first so connecting
+        // from a page with few/no plans can't overwrite the cloud with nothing
+        if (gistId) {
+          const res = await fetch("https://api.github.com/gists/" + gistId, {
+            headers: { "Authorization": "Bearer " + token, "Accept": "application/vnd.github+json" }
+          });
+          if (!res.ok) throw new Error("Could not read Gist (HTTP " + res.status + ")");
+          const data = await res.json();
+          const file = data.files["pelham_plans_2026_2027.json"] || Object.values(data.files)[0];
+          if (file && file.content) {
+            const cloudPlans = JSON.parse(file.content);
+            plans = { ...cloudPlans, ...plans };
+            localStorage.setItem(PLANS_STORAGE_KEY, JSON.stringify(plans));
+            renderAllPlans();
+          }
+        }
         await pushPlansToGist(true);
         statusEl.innerText = "Connected & synced successfully!";
         statusEl.style.color = "#34d399";
@@ -7907,9 +8265,11 @@
         const file = data.files["pelham_plans_2026_2027.json"] || Object.values(data.files)[0];
         if (file && file.content) {
           const cloudPlans = JSON.parse(file.content);
-          plans = { ...plans, ...cloudPlans };
+          // Cloud is the source of truth: replace (not merge) so cells that were
+          // shifted or cleared on another device don't reappear here
+          plans = cloudPlans;
           localStorage.setItem(PLANS_STORAGE_KEY, JSON.stringify(plans));
-          applyPlansToDOM();
+          renderAllPlans();
           setSyncStatus("synced", "All changes synced");
           showToast("Latest plans pulled from cloud");
         }
