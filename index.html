@@ -7898,7 +7898,8 @@
       };
       addItem("↓ Push " + CLASS_COLS[col] + " down 1 day", () => shiftPlans(date, [col], 1));
       addItem("↓ Push all classes down 1 day", () => shiftPlans(date, Object.keys(CLASS_COLS), 1));
-      addItem("↑ Pull " + CLASS_COLS[col] + " up 1 day", () => shiftPlans(date, [col], -1), "danger");
+      addItem("↑ Pull " + CLASS_COLS[col] + " up 1 day", () => shiftPlans(date, [col], -1));
+      addItem("↑ Pull all classes up 1 day", () => shiftPlans(date, Object.keys(CLASS_COLS), -1));
 
       const r = btn.getBoundingClientRect();
       menu.classList.add("open");
@@ -7922,9 +7923,27 @@
       const start = days.indexOf(startDate);
       if (start < 0) return;
       const last = days.length - 1;
-      if (start === last) {
+      if (direction === 1 && start === last) {
         showToast("This is the last school day — nowhere to shift to.");
         return;
+      }
+
+      // Pull-up never deletes a plan: it closes an empty gap. If the clicked cell
+      // is empty, that's the gap; otherwise the gap must be the school day before it.
+      const gapIndex = {};
+      if (direction === -1) {
+        for (const col of cols) {
+          const has = i => plans[days[i] + "_" + col] !== undefined;
+          if (!has(start)) {
+            gapIndex[col] = start;
+          } else if (start > 0 && !has(start - 1)) {
+            gapIndex[col] = start - 1;
+          } else {
+            const prev = start > 0 ? formatShortDate(days[start - 1]) : "the first day";
+            showToast("Can't pull up: " + CLASS_COLS[col] + " already has a plan on " + prev + ". Clear it first.", 4500);
+            return;
+          }
+        }
       }
 
       // Snapshot so the shift can be undone (pull-up overwrites the start cell)
@@ -7944,7 +7963,7 @@
           }
           delete plans[k(start)];
         } else {
-          for (let i = start; i < last; i++) {
+          for (let i = gapIndex[col]; i < last; i++) {
             const next = plans[k(i + 1)];
             if (next !== undefined) plans[k(i)] = next; else delete plans[k(i)];
           }
